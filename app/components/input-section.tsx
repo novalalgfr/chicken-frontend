@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
 'use client';
 
 import { useState, useRef, useCallback, useEffect } from 'react';
@@ -9,45 +8,58 @@ export default function InputSection() {
 	const [selectedFile, setSelectedFile] = useState<File | null>(null);
 	const [errorMsg, setErrorMsg] = useState<string | null>(null);
 	const [isLoading, setIsLoading] = useState(false);
-
-	// State untuk menyimpan hasil dari API Flask
 	const [detectionResult, setDetectionResult] = useState<{ count: number; image_base64: string } | null>(null);
 
-	// State untuk Kamera
 	const [isCameraOn, setIsCameraOn] = useState(false);
 	const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
 	const videoRef = useRef<HTMLVideoElement>(null);
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 
-	// --- LOGIKA UPLOAD GAMBAR ---
+	const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.heic', '.heif'];
+	const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/heic', 'image/heif'];
+	const MAX_SIZE_MB = 5;
+
+	const isHeicFile = (file: File): boolean => {
+		const ext = '.' + file.name.split('.').pop()?.toLowerCase();
+		return ext === '.heic' || ext === '.heif' || file.type === 'image/heic' || file.type === 'image/heif';
+	};
+
 	const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
 		setErrorMsg(null);
 		const file = e.target.files?.[0];
-
 		if (!file) return;
 
-		if (file.type !== 'image/jpeg' && file.type !== 'image/png') {
-			setErrorMsg('Format file harus JPG atau PNG.');
+		const ext = '.' + (file.name.split('.').pop()?.toLowerCase() ?? '');
+		const isValidMime = ALLOWED_MIME_TYPES.includes(file.type);
+		const isValidExt = ALLOWED_EXTENSIONS.includes(ext);
+
+		// iPhone kadang kirim HEIC sebagai application/octet-stream, fallback ke ekstensi
+		if (!isValidMime && !isValidExt) {
+			setErrorMsg('Format file harus JPG, PNG, atau HEIC.');
 			return;
 		}
 
-		if (file.size > 5 * 1024 * 1024) {
-			setErrorMsg('Ukuran gambar maksimal 5MB.');
+		if (file.size > MAX_SIZE_MB * 1024 * 1024) {
+			setErrorMsg(`Ukuran gambar maksimal ${MAX_SIZE_MB}MB.`);
 			return;
 		}
 
 		setSelectedFile(file);
-		const reader = new FileReader();
-		reader.onloadend = () => {
-			setImagePreview(reader.result as string);
-		};
-		reader.readAsDataURL(file);
+
+		if (isHeicFile(file)) {
+			// Browser tidak bisa render HEIC langsung, gunakan placeholder
+			setImagePreview('heic-placeholder');
+		} else {
+			const reader = new FileReader();
+			reader.onloadend = () => setImagePreview(reader.result as string);
+			reader.readAsDataURL(file);
+		}
 	};
 
 	// --- LOGIKA KAMERA ---
 	const stopCamera = useCallback(() => {
-		if (videoRef.current && videoRef.current.srcObject) {
+		if (videoRef.current?.srcObject) {
 			const stream = videoRef.current.srcObject as MediaStream;
 			stream.getTracks().forEach((track) => track.stop());
 			setIsCameraOn(false);
@@ -58,13 +70,13 @@ export default function InputSection() {
 		setErrorMsg(null);
 		try {
 			const stream = await navigator.mediaDevices.getUserMedia({
-				video: { facingMode: facingMode }
+				video: { facingMode }
 			});
 			if (videoRef.current) {
 				videoRef.current.srcObject = stream;
 				setIsCameraOn(true);
 			}
-		} catch (err) {
+		} catch {
 			setErrorMsg('Gagal mengakses kamera. Pastikan izin kamera diberikan.');
 		}
 	}, [facingMode]);
@@ -83,9 +95,8 @@ export default function InputSection() {
 			const ctx = canvas.getContext('2d');
 			if (ctx) {
 				ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-				const dataUrl = canvas.toDataURL('image/jpeg');
+				const dataUrl = canvas.toDataURL('image/jpeg', 1.0);
 				setImagePreview(dataUrl);
-
 				fetch(dataUrl)
 					.then((res) => res.blob())
 					.then((blob) => {
@@ -97,25 +108,22 @@ export default function InputSection() {
 		}
 	};
 
-	// Efek Kamera
 	useEffect(() => {
 		if (activeTab === 'camera' && !imagePreview) {
 			startCamera();
 		} else {
 			stopCamera();
 		}
-		return () => {
-			stopCamera();
-		};
+		return () => stopCamera();
 	}, [activeTab, imagePreview, startCamera, stopCamera]);
 
-	// --- LOGIKA KIRIM KE FLASK API ---
+	// --- LOGIKA KIRIM KE API ---
 	const handleDetect = async () => {
 		if (!selectedFile) return;
 
 		setIsLoading(true);
 		setErrorMsg(null);
-		setDetectionResult(null); // Reset hasil sebelumnya
+		setDetectionResult(null);
 
 		const formData = new FormData();
 		formData.append('image', selectedFile);
@@ -126,17 +134,16 @@ export default function InputSection() {
 				body: formData
 			});
 
-			if (!response.ok) throw new Error('Gagal melakukan deteksi');
+			if (!response.ok) {
+				const errData = await response.json().catch(() => null);
+				throw new Error(errData?.detail || 'Gagal melakukan deteksi.');
+			}
 
 			const result = await response.json();
-
-			// Simpan hasil ke state agar UI langsung berubah
-			setDetectionResult({
-				count: result.count,
-				image_base64: result.image_base64
-			});
+			setDetectionResult({ count: result.count, image_base64: result.image_base64 });
 		} catch (error) {
-			setErrorMsg('Terjadi kesalahan saat menghubungi server API Flask.');
+			const msg = error instanceof Error ? error.message : 'Terjadi kesalahan saat menghubungi server.';
+			setErrorMsg(msg);
 		} finally {
 			setIsLoading(false);
 		}
@@ -145,9 +152,44 @@ export default function InputSection() {
 	const resetImage = () => {
 		setImagePreview(null);
 		setSelectedFile(null);
-		setDetectionResult(null); // Bersihkan juga hasil deteksi
+		setDetectionResult(null);
+		setErrorMsg(null);
 		if (activeTab === 'camera') startCamera();
 		if (fileInputRef.current) fileInputRef.current.value = '';
+	};
+
+	// --- RENDER HELPERS ---
+	const renderImagePreview = () => {
+		if (imagePreview === 'heic-placeholder') {
+			return (
+				<div className="flex flex-col items-center justify-center h-48 text-slate-500 gap-2">
+					<svg
+						className="w-12 h-12 text-slate-400"
+						fill="none"
+						stroke="currentColor"
+						viewBox="0 0 24 24"
+					>
+						<path
+							strokeLinecap="round"
+							strokeLinejoin="round"
+							strokeWidth={2}
+							d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+						/>
+					</svg>
+					<p className="text-sm font-medium text-slate-700">File HEIC siap dideteksi</p>
+					<p className="text-xs text-slate-400">Preview tidak tersedia di browser</p>
+				</div>
+			);
+		}
+
+		return (
+			// eslint-disable-next-line @next/next/no-img-element
+			<img
+				src={detectionResult ? detectionResult.image_base64 : (imagePreview as string)}
+				alt="Preview Ayam"
+				className="w-full h-auto object-contain max-h-[60vh]"
+			/>
+		);
 	};
 
 	return (
@@ -160,6 +202,7 @@ export default function InputSection() {
 
 			{!imagePreview ? (
 				<div className="flex flex-col space-y-6">
+					{/* Tab Switcher */}
 					<div className="flex bg-slate-100 p-1 rounded-xl">
 						<button
 							onClick={() => setActiveTab('upload')}
@@ -175,6 +218,7 @@ export default function InputSection() {
 						</button>
 					</div>
 
+					{/* Tab Upload */}
 					{activeTab === 'upload' && (
 						<div
 							onClick={() => fileInputRef.current?.click()}
@@ -184,7 +228,7 @@ export default function InputSection() {
 								type="file"
 								ref={fileInputRef}
 								onChange={handleFileChange}
-								accept="image/jpeg, image/png"
+								accept="image/jpeg,image/png,image/heic,image/heif,.heic,.heif"
 								className="hidden"
 							/>
 							<div className="flex flex-col items-center space-y-3">
@@ -204,11 +248,12 @@ export default function InputSection() {
 									</svg>
 								</div>
 								<p className="text-slate-700 font-medium">Klik untuk memilih gambar</p>
-								<p className="text-slate-500 text-sm">JPG atau PNG, maksimal 5MB</p>
+								<p className="text-slate-500 text-sm">JPG, PNG, atau HEIC — maksimal {MAX_SIZE_MB}MB</p>
 							</div>
 						</div>
 					)}
 
+					{/* Tab Kamera */}
 					{activeTab === 'camera' && (
 						<div className="flex flex-col items-center space-y-4">
 							<div className="relative w-full max-w-md aspect-[3/4] md:aspect-video bg-black rounded-2xl overflow-hidden shadow-inner">
@@ -274,7 +319,7 @@ export default function InputSection() {
 				</div>
 			) : (
 				<div className="flex flex-col items-center space-y-6">
-					{/* INFO JUMLAH AYAM TERDETEKSI */}
+					{/* Hasil Deteksi */}
 					{detectionResult && (
 						<div className="w-full max-w-md bg-teal-50 border border-teal-200 rounded-2xl p-6 text-center shadow-sm">
 							<h4 className="text-lg font-bold text-teal-900 mb-1">Deteksi Selesai!</h4>
@@ -288,16 +333,12 @@ export default function InputSection() {
 						</div>
 					)}
 
+					{/* Preview Gambar */}
 					<div className="relative w-full max-w-md rounded-2xl overflow-hidden border border-slate-200 shadow-sm bg-slate-50">
-						{/* eslint-disable-next-line @next/next/no-img-element */}
-						<img
-							// Tampilkan gambar hasil deteksi dari API, jika belum ada tampilkan gambar asli
-							src={detectionResult ? detectionResult.image_base64 : (imagePreview as string)}
-							alt="Preview Ayam"
-							className="w-full h-auto object-contain max-h-[60vh]"
-						/>
+						{renderImagePreview()}
 					</div>
 
+					{/* Tombol Aksi */}
 					<div className="flex flex-col sm:flex-row gap-4 w-full max-w-md">
 						<button
 							onClick={resetImage}
@@ -307,7 +348,6 @@ export default function InputSection() {
 							{detectionResult ? 'Coba Gambar Lain' : 'Ganti Gambar'}
 						</button>
 
-						{/* Tombol Deteksi Hilang jika sudah ada hasil */}
 						{!detectionResult && (
 							<button
 								onClick={handleDetect}
@@ -328,12 +368,12 @@ export default function InputSection() {
 												r="10"
 												stroke="currentColor"
 												strokeWidth="4"
-											></circle>
+											/>
 											<path
 												className="opacity-75"
 												fill="currentColor"
 												d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-											></path>
+											/>
 										</svg>
 										Mendeteksi...
 									</>

@@ -7,7 +7,7 @@ export default function Home() {
 			<div className="absolute top-[-10%] left-[-10%] w-96 h-96 bg-blue-100 rounded-full blur-3xl opacity-50 pointer-events-none"></div>
 			<div className="absolute top-[20%] right-[-5%] w-80 h-80 bg-teal-100 rounded-full blur-3xl opacity-50 pointer-events-none"></div>
 
-			<div className="relative z-10 mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-20 md:py-28">
+			<div className="relative z-10 mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-28">
 				{/* Hero Section */}
 				<section className="flex flex-col items-center text-center space-y-6 mb-20">
 					<div className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-4 py-1.5 text-sm font-medium text-blue-700 shadow-sm">
